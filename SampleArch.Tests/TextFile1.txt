@@ -1,0 +1,362 @@
+﻿Generic Repository and Unit of Work Pattern, Entity Framework,
+Unit Testing, Autofac IoC Container and ASP.NET MVC [Part 3]
+
+Unit Testing:
+We have already created SampleArch.Test project for unit testing in Part 1. Now we will use Moq library for mocking.
+To install Moq, run the following command in the Package Manager Console
+Install-Package Moq 
+Add reference of all other projects in it.
+Controller Testing:
+For controller testing, we will create Mock service objects and test controller methods.
+For simplicity, we are going to test CountryController.
+?
+[TestClass]
+  public class CountryControllerTest
+  {
+      private Mock<ICountryService> _countryServiceMock;
+      CountryController objController;
+      List<Country> listCountry;
+ 
+      [TestInitialize]
+      public void Initialize()
+      {
+ 
+          _countryServiceMock = new Mock<ICountryService>();
+          objController = new CountryController(_countryServiceMock.Object);
+          listCountry = new List<Country>() {
+           new Country() { Id = 1, Name = "US" },
+           new Country() { Id = 2, Name = "India" },
+           new Country() { Id = 3, Name = "Russia" }
+          };
+      }
+ 
+ 
+ 
+      [TestMethod]
+      public void Country_Get_All()
+      {
+          //Arrange
+          _countryServiceMock.Setup(x => x.GetAll()).Returns(listCountry);
+ 
+          //Act
+          var result = ((objController.Index() as ViewResult).Model) as List<Country>;
+ 
+          //Assert
+          Assert.AreEqual(result.Count, 3);
+          Assert.AreEqual("US", result[0].Name);
+          Assert.AreEqual("India", result[1].Name);
+          Assert.AreEqual("Russia", result[2].Name);
+ 
+      }
+ 
+      [TestMethod]
+      public void Valid_Country_Create()
+      {
+          //Arrange
+          Country c = new Country() { Name = "test1"};
+ 
+          //Act
+          var result = (RedirectToRouteResult)objController.Create(c);
+ 
+          //Assert 
+          _countryServiceMock.Verify(m => m.Create(c), Times.Once);
+          Assert.AreEqual("Index", result.RouteValues["action"]);
+          
+      }
+ 
+      [TestMethod]
+      public void Invalid_Country_Create()
+      {
+          // Arrange
+          Country c = new Country() { Name = ""};
+          objController.ModelState.AddModelError("Error", "Something went wrong");
+ 
+          //Act
+          var result = (ViewResult)objController.Create(c);
+ 
+          //Assert
+          _countryServiceMock.Verify(m => m.Create(c), Times.Never);
+          Assert.AreEqual("", result.ViewName);
+      }
+ 
+  }
+Initialize: To initialize Mock service object, controller and other objects
+Country_Get_All: To test controller’s index method
+Valid_Country_Create: To test Create action of the controller
+Invalid_Country_Create: To test Create action when any modelstate occurs
+Similarly, you can implement test methods for other controller’s action.
+Service Testing:
+For this, we will create Mock repository and other objects which are used in service methods and then test Service methods.
+?
+[TestClass]
+  public class CountryServiceTest
+  {
+      private Mock<ICountryRepository> _mockRepository;
+      private ICountryService _service;
+      Mock<IUnitOfWork> _mockUnitWork;
+      List<Country> listCountry;
+ 
+      [TestInitialize]
+      public void Initialize()
+      {
+          _mockRepository = new Mock<ICountryRepository>();
+          _mockUnitWork = new Mock<IUnitOfWork>();
+          _service = new CountryService(_mockUnitWork.Object, _mockRepository.Object);
+          listCountry = new List<Country>() {
+           new Country() { Id = 1, Name = "US" },
+           new Country() { Id = 2, Name = "India" },
+           new Country() { Id = 3, Name = "Russia" }
+          };
+      }
+ 
+      [TestMethod]
+      public void Country_Get_All()
+      {
+          //Arrange
+          _mockRepository.Setup(x => x.GetAll()).Returns(listCountry);
+ 
+          //Act
+          List<Country> results = _service.GetAll() as List<Country>;
+ 
+          //Assert
+          Assert.IsNotNull(results);
+          Assert.AreEqual(3, results.Count);
+      }
+ 
+ 
+      [TestMethod]
+      public void Can_Add_Country()
+      {
+          //Arrange
+          int Id = 1;
+          Country emp = new Country() { Name = "UK" };
+          _mockRepository.Setup(m => m.Add(emp)).Returns((Country e) =>
+          {
+              e.Id = Id;
+              return e;
+          });
+          
+ 
+          //Act
+          _service.Create(emp);
+ 
+          //Assert
+          Assert.AreEqual(Id, emp.Id);
+          _mockUnitWork.Verify(m => m.Commit(), Times.Once);
+      }
+ 
+ 
+  }
+Initialize: To initialize mock repository, mock unit of work and service objects.
+Country_Get_All: To test GetAll method of the service
+Can_Add_Country: To test service Create method.
+Similarly we can test other methods.
+Repository Testing:
+It is less required to test repository because EF is already well tested.
+Before starting testing, first create testcontext. Add a new class and add following code:
+TestContext.cs
+?
+public class TestContext : DbContext
+  {
+      public TestContext()
+          : base("Name=TestContext")
+      {
+ 
+      }
+      public TestContext(bool enableLazyLoading, bool enableProxyCreation)
+          : base("Name=TestContext")
+      {
+          Configuration.ProxyCreationEnabled = enableProxyCreation;
+          Configuration.LazyLoadingEnabled = enableLazyLoading;
+      }
+      public TestContext(DbConnection connection)
+          : base(connection, true)
+      {
+          Configuration.LazyLoadingEnabled = false;
+      }
+ 
+      public DbSet<Person> Persons { get; set; }
+      public DbSet<Country> Countries { get; set; }
+ 
+ 
+ 
+      protected override void OnModelCreating(DbModelBuilder modelBuilder)
+      {
+          // Suppress code first model migration check          
+          Database.SetInitializer<TestContext>(new AlwaysCreateInitializer());
+ 
+          modelBuilder.Conventions.Remove<OneToManyCascadeDeleteConvention>();
+          modelBuilder.Conventions.Remove<ManyToManyCascadeDeleteConvention>();
+          modelBuilder.Conventions.Remove<PluralizingTableNameConvention>();
+ 
+          base.OnModelCreating(modelBuilder);
+      }
+ 
+      public void Seed(TestContext Context)
+      {
+          var listCountry = new List<Country>() {
+           new Country() { Id = 1, Name = "US" },
+           new Country() { Id = 2, Name = "India" },
+           new Country() { Id = 3, Name = "Russia" }
+          };
+          Context.Countries.AddRange(listCountry);
+          Context.SaveChanges();
+      }
+ 
+      public class DropCreateIfChangeInitializer : DropCreateDatabaseIfModelChanges<TestContext>
+      {
+          protected override void Seed(TestContext context)
+          {
+              context.Seed(context);
+              base.Seed(context);
+          }
+      }
+ 
+      public class CreateInitializer : CreateDatabaseIfNotExists<TestContext>
+      {
+          protected override void Seed(TestContext context)
+          {
+              context.Seed(context);
+              base.Seed(context);
+          }
+      }
+ 
+      public class AlwaysCreateInitializer : DropCreateDatabaseAlways<TestContext>
+      {
+          protected override void Seed(TestContext context)
+          {
+              context.Seed(context);
+              base.Seed(context);
+          }
+      }
+ 
+ 
+  }
+1. Here two types of constructor defined: one uses connectionstring name and another uses DBConnection object. We will use both types.
+2. I use AlwaysCreateInitializer Initializer in following means each time datasource is recreated
+?
+Database.SetInitializer<TestContext>(new AlwaysCreateInitializer());
+You can set other DropCreateIfChangeInitializer,CreateInitializer depending on your requirement.
+There are two ways to test:
+1. Use In Memory database
+2. Use another database for testing
+We will do in both ways.
+1. Use In Memory database
+We are going to use Effort library for this.
+To install Effort for EF6, run the following command in the Package Manager Console
+Install-Package Effort.EF6 
+?
+[TestClass]
+  public class CountryRepositoryTest
+  {
+      DbConnection connection;
+      TestContext databaseContext;
+      CountryRepository objRepo;
+ 
+      [TestInitialize]
+      public void Initialize()
+      {
+          connection = Effort.DbConnectionFactory.CreateTransient();
+          databaseContext = new TestContext(connection);
+          objRepo = new CountryRepository(databaseContext);
+          
+      }
+ 
+      [TestMethod]
+      public void Country_Repository_Get_ALL()
+      {
+          //Act
+          var result = objRepo.GetAll().ToList();
+ 
+          //Assert
+ 
+          Assert.IsNotNull(result);
+          Assert.AreEqual(3, result.Count);
+          Assert.AreEqual("US", result[0].Name);
+          Assert.AreEqual("India", result[1].Name);
+          Assert.AreEqual("Russia", result[2].Name);
+      }
+ 
+      [TestMethod]
+      public void Country_Repository_Create()
+      {
+          //Arrange
+          Country c = new Country() {Name  = "UK" };
+ 
+          //Act
+          var result = objRepo.Add(c);
+          databaseContext.SaveChanges();
+ 
+          var lst = objRepo.GetAll().ToList();
+ 
+          //Assert
+ 
+          Assert.AreEqual(4, lst.Count);
+          Assert.AreEqual("UK", lst.Last().Name); 
+      }
+  }
+Initialize: To initialize Effort, context and repository object.
+Country_Repository_Get_ALL: To check GetAll method of the repository.
+Country_Repository_Create: To check Add method of the repository.
+2. Use another database for testing
+Add connection string in app.config
+?
+<connectionStrings>
+    <add name="TestContext" connectionString="Data Source=(LocalDb)\v11.0;Initial Catalog=SampleArchTest;Integrated Security=SSPI;AttachDBFilename=E:\Project SA\Arch\SampleArch\SampleArch\SampleArch.Test\DB\SampleArchTest.mdf" providerName="System.Data.SqlClient"/>
+  </connectionStrings>
+?
+[TestClass]
+   public class CountryRepositoryTestWithDB
+   {
+     
+       TestContext databaseContext;
+       CountryRepository objRepo;
+ 
+       [TestInitialize]
+       public void Initialize()
+       {
+          
+           databaseContext = new TestContext();
+           objRepo = new CountryRepository(databaseContext);
+           
+       }
+ 
+       [TestMethod]
+       public void Country_Repository_Get_ALL()
+       {
+           //Act
+           var result = objRepo.GetAll().ToList();
+ 
+           //Assert
+ 
+           Assert.IsNotNull(result);
+           Assert.AreEqual(3, result.Count);
+           Assert.AreEqual("US", result[0].Name);
+           Assert.AreEqual("India", result[1].Name);
+           Assert.AreEqual("Russia", result[2].Name);
+       }
+ 
+       [TestMethod]
+       public void Country_Repository_Create()
+       {
+           //Arrange
+           Country c = new Country() {Name  = "UK" };
+ 
+           //Act
+           var result = objRepo.Add(c);
+           databaseContext.SaveChanges();
+ 
+           var lst = objRepo.GetAll().ToList();
+ 
+           //Assert
+ 
+           Assert.AreEqual(4, lst.Count);
+           Assert.AreEqual("UK", lst.Last().Name); 
+       }
+   }
+It is similar to earlier except Initialize changes. Now we are using our regular provider and creating database each time.
+
+Conclusion:
+We have seen how different layers can be tested without touching the existing application code.
+You can get Source Code in last part of this series.
+Feel free to share your thoughts in the comment box.

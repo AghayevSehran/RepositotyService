@@ -1,0 +1,4 @@
+﻿1. Constructor of service layer takes UnitOfWork and Repository objects.
+2. Service layer can’t access databasecontext object means
+LINQ query on top of entity framework can’t be applied here
+which makes clean separation of concern.
